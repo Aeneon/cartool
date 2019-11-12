@@ -27,6 +27,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		4CEBD186237AF712004D53DE /* CoreUI */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = CoreUI; path = ../../../../System/Library/PrivateFrameworks/CoreUI.framework/Versions/A/CoreUI; sourceTree = "<group>"; };
 		B06C818717934BA30082BD37 /* cartool */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = cartool; sourceTree = BUILT_PRODUCTS_DIR; };
 		B06C818A17934BA30082BD37 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		B06C818D17934BA30082BD37 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
@@ -68,6 +69,7 @@
 		B06C818917934BA30082BD37 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				4CEBD186237AF712004D53DE /* CoreUI */,
 				B06C819817934BCC0082BD37 /* CoreUI.framework */,
 				B06C818A17934BA30082BD37 /* Foundation.framework */,
 			);
@@ -126,6 +128,7 @@
 			developmentRegion = English;
 			hasScannedForEncodings = 0;
 			knownRegions = (
+				English,
 				en,
 			);
 			mainGroup = B06C817E17934BA30082BD37;

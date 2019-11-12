@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import <CoreGraphics/CoreGraphics.h>
 
 typedef enum _kCoreThemeIdiom {
 	kCoreThemeIdiomUniversal,
@@ -60,12 +61,14 @@ typedef NS_ENUM(NSInteger, UIUserInterfaceSizeClass) {
 
 @property(readonly) bool isVectorBased;
 
+-(id)initWithURL:(NSURL *)URL error:(NSError **)error;
 -(id)initWithName:(NSString *)n fromBundle:(NSBundle *)b;
 -(id)allKeys;
 -(id)allImageNames;
 -(CUINamedImage *)imageWithName:(NSString *)n scaleFactor:(CGFloat)s;
 -(CUINamedImage *)imageWithName:(NSString *)n scaleFactor:(CGFloat)s deviceIdiom:(int)idiom;
 -(NSArray *)imagesWithName:(NSString *)n;
+-(struct CGPDFDocument { }*)pdfDocumentWithName:(id)URL;
 
 @end
 
@@ -134,28 +137,86 @@ NSMutableArray *getImagesArray(CUICatalog *catalog, NSString *key)
 {
     NSMutableArray *images = [[NSMutableArray alloc] initWithCapacity:5];
 
-    for (NSNumber *scaleFactor in @[@1, @2, @3])
-    {
-        CUINamedImage *image = [catalog imageWithName:key scaleFactor:scaleFactor.doubleValue];
+     struct CGPDFDocument *pdfDocument = [catalog pdfDocumentWithName:key];
 
-        if (image && image.scale == scaleFactor.floatValue) [images addObject:image];
+    if (pdfDocument) {
+        [images addObject:(__bridge id _Nonnull)(pdfDocument)];
+    } else {
+        for (NSNumber *scaleFactor in @[@1, @2, @3])
+        {
+            CUINamedImage *image = [catalog imageWithName:key scaleFactor:scaleFactor.doubleValue];
+            if (image && image.scale == scaleFactor.floatValue) [images addObject:image];
+        }
     }
 
     return images;
 }
 
+void writePDFtoFile(struct CGPDFDocument *pdfDocument, NSString *path, NSString *key) {
+    unsigned long pageCount = CGPDFDocumentGetNumberOfPages(pdfDocument);
+    CGPDFPageRef pageRef = CGPDFDocumentGetPage(pdfDocument, 1);
+    CGRect pageRect = CGPDFPageGetBoxRect(pageRef, kCGPDFMediaBox);
+    float pageHeight = pageRect.size.height;
+    pageRect.size.height = pageRect.size.height * pageCount;
+
+    NSMutableData* pdfData = [[NSMutableData alloc] init];
+    CGDataConsumerRef pdfConsumer = CGDataConsumerCreateWithCFData((CFMutableDataRef)pdfData);
+    CGContextRef pdfContext = CGPDFContextCreate(pdfConsumer, &pageRect, NULL);
+
+    CGPDFContextBeginPage(pdfContext, NULL);
+    CGContextTranslateCTM(pdfContext, 0, pageRect.size.height);
+    for (int i = 1; i <= pageCount; i++) {
+        @autoreleasepool {
+            pageRef = CGPDFDocumentGetPage(pdfDocument, i);
+            CGContextTranslateCTM(pdfContext, 0, -pageHeight);
+            CGContextDrawPDFPage(pdfContext, pageRef);
+        }
+    }
+    CGPDFContextEndPage(pdfContext);
+    CGPDFContextClose(pdfContext);
+
+    NSString *filename = [NSString stringWithFormat:@"%@.pdf", key];
+    NSString *pdfFile = [path stringByAppendingPathComponent:filename];
+
+    [pdfData writeToFile: pdfFile atomically: NO];
+    printf("\t%s\n", [filename UTF8String]);
+}
+
 void exportCarFileAtPath(NSString * carPath, NSString *outputDirectoryPath)
 {
 	NSError *error = nil;
-	
+	BOOL isDir;
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    
 	outputDirectoryPath = [outputDirectoryPath stringByExpandingTildeInPath];
-	
-	CUIThemeFacet *facet = [CUIThemeFacet themeWithContentsOfURL:[NSURL fileURLWithPath:carPath] error:&error];
-	
-	CUICatalog *catalog = [[CUICatalog alloc] init];
-	
-	/* Override CUICatalog to point to a file rather than a bundle */
-	[catalog setValue:facet forKey:@"_storageRef"];
+    
+	// mkdir
+    if ([fileManager fileExistsAtPath:outputDirectoryPath isDirectory:&isDir]) {
+        if (! isDir) {
+            NSLog(@"Error: output directory %@ exists and is not a directory", outputDirectoryPath);
+            exit(1);
+        }
+    } else {
+        if (![fileManager createDirectoryAtPath:outputDirectoryPath
+                                       withIntermediateDirectories:NO
+                                                        attributes:nil
+                                                             error:&error])
+        {
+            NSLog(@"Error: %@ while trying to create directory %@", error, outputDirectoryPath);
+        }
+    }
+    
+    CUICatalog *catalog = nil;
+    if ([CUICatalog instancesRespondToSelector:@selector(initWithURL:error:)]) {
+        /* If CUICatalog has the URL API (Mojave), use it. */
+        catalog = [[CUICatalog alloc] initWithURL:[NSURL fileURLWithPath:carPath] error:&error];
+    } else {
+        CUIThemeFacet *facet = [CUIThemeFacet themeWithContentsOfURL:[NSURL fileURLWithPath:carPath] error:&error];
+        catalog = [[CUICatalog alloc] init];
+        /* Override CUICatalog to point to a file rather than a bundle */
+        [catalog setValue:facet forKey:@"_storageRef"];
+    }
+    NSCAssert(!error, @"Error attempting to open asset catalog (%@): %@", carPath, error);
 	
 	/* CUICommonAssetStorage won't link */
 	CUICommonAssetStorage *storage = [[NSClassFromString(@"CUICommonAssetStorage") alloc] initWithPath:carPath];
@@ -185,8 +246,19 @@ void exportCarFileAtPath(NSString * carPath, NSString *outputDirectoryPath)
 		NSMutableArray *images = getImagesArray(catalog, key);
 		for( CUINamedImage *image in images )
 		{
-			if( CGSizeEqualToSize(image.size, CGSizeZero) )
+            if ( ![image respondsToSelector:@selector(size)]) {
+                // image is really a CGPDFDocument
+                struct CGPDFDocument *pdfDocument = (__bridge struct CGPDFDocument *)(image);
+                printf("\t looks like a PDF!!\n");
+                if (outputDirectoryPath) {
+                    writePDFtoFile(pdfDocument, outputDirectoryPath, key);
+                } else {
+                    printf("\t not saving since an output path wasn't provided\n");
+                }
+            }
+            else if( CGSizeEqualToSize(image.size, CGSizeZero) ) {
 				printf("\tnil image?\n");
+            }
 			else
 			{
 				CGImageRef cgImage = [image image];
@@ -202,8 +274,11 @@ void exportCarFileAtPath(NSString * carPath, NSString *outputDirectoryPath)
 				NSString *scale = image.scale > 1.0 ? [NSString stringWithFormat:@"@%dx", (int)floor(image.scale)] : @"";
 				NSString *name = [NSString stringWithFormat:@"%@%@%@%@.png", key, idiomSuffix, sizeClassSuffix, scale];
 				printf("\t%s\n", [name UTF8String]);
-				if( outputDirectoryPath )
-					CGImageWriteToFile(cgImage, [outputDirectoryPath stringByAppendingPathComponent:name]);
+                if( outputDirectoryPath ) {
+                    CGImageWriteToFile(cgImage, [outputDirectoryPath stringByAppendingPathComponent:name]);
+                } else {
+                    printf("\t not saving since an output path wasn't provided\n");
+                }
 			}
 		}
 	}
